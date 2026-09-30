@@ -1,4 +1,4 @@
-"""Watch Koto written-exam slots and notify via Gmail.
+"""Watch Koto written-exam slots and notify through GitHub Issues.
 
 Runs with Python's standard library on GitHub Actions. No personal booking data
 is sent to the reservation site. GitHub issue #1-like state is created on first run.
@@ -7,12 +7,9 @@ is sent to the reservation site. GitHub issue #1-like state is created on first 
 import datetime as dt
 import json
 import os
-import smtplib
-import ssl
 import sys
 import urllib.parse
 import urllib.request
-from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 
 
@@ -108,7 +105,7 @@ def load_state():
             except json.JSONDecodeError:
                 raise RuntimeError("Notification state issue has invalid JSON")
             return issue["number"], state
-    state = {"email_sent": []}
+    state = {"issue_sent": []}
     issue = github("POST", "issues", {"title": STATE_TITLE, "body": json.dumps(state)})
     return issue["number"], state
 
@@ -130,16 +127,18 @@ def message_for(slots, keys):
     return "\n".join(lines)
 
 
-def send_email(message):
-    mail = EmailMessage()
-    mail["Subject"] = "江東・学科試験の空き枠"
-    mail["From"] = os.environ["GMAIL_ADDRESS"]
-    mail["To"] = os.environ["MAIL_TO"]
-    mail.set_content(message)
-    with smtplib.SMTP("smtp.gmail.com", 587, timeout=20) as smtp:
-        smtp.starttls(context=ssl.create_default_context())
-        smtp.login(os.environ["GMAIL_ADDRESS"], os.environ["GMAIL_APP_PASSWORD"])
-        smtp.send_message(mail)
+def create_notification_issue(title, body):
+    owner = os.environ["GITHUB_REPOSITORY"].split("/", 1)[0]
+    issue = github("POST", "issues", {"title": title, "body": body, "assignees": [owner]})
+    if owner not in {user["login"] for user in issue.get("assignees", [])}:
+        raise RuntimeError("Notification issue was created without the expected assignee")
+    print(f"Notification issue: {issue['html_url']}")
+
+
+def required_environment():
+    missing = [name for name in ("GITHUB_REPOSITORY", "GH_TOKEN") if not os.getenv(name)]
+    if missing:
+        raise RuntimeError("Missing configuration: " + ", ".join(missing))
 
 
 def run():
@@ -149,13 +148,13 @@ def run():
         print(f"Probe succeeded. Open slots in the next 7 days: {len(slots)}")
         return
 
-    required = (
-        "GITHUB_REPOSITORY", "GH_TOKEN", "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD",
-        "MAIL_TO",
-    )
-    missing = [name for name in required if not os.getenv(name)]
-    if missing:
-        raise RuntimeError("Missing configuration: " + ", ".join(missing))
+    required_environment()
+    if "--test-notification" in sys.argv:
+        create_notification_issue(
+            "【通知テスト】江東・本免学科試験",
+            "GitHubの通知メールを確認するためのテストです。実際の空き枠ではありません。",
+        )
+        return
     if TIME_OF_DAY not in ("all", "morning", "afternoon"):
         raise RuntimeError("TIME_OF_DAY must be all, morning, or afternoon")
 
@@ -170,13 +169,18 @@ def run():
     current = set(slots)
     print(f"Open slots: {len(current)}")
 
-    previous = set(state.get("email_sent", [])) & current
+    previous = set(state.get("issue_sent", [])) & current
     pending = current - previous
     if pending:
-        send_email(message_for(slots, pending))
+        first = slots[sorted(pending)[0]]
+        more = f" ほか{len(pending) - 1}件" if len(pending) > 1 else ""
+        create_notification_issue(
+            f"【空き枠】江東・本免学科試験 {first['date']} {first['time']}{more}",
+            message_for(slots, pending),
+        )
         previous.update(pending)
-        print(f"Email: notified {len(pending)} slots")
-    state = {"email_sent": sorted(previous)}
+        print(f"GitHub issue: notified {len(pending)} slots")
+    state = {"issue_sent": sorted(previous)}
     save_state(issue_number, state)
 
 

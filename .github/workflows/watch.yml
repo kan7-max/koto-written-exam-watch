@@ -6,7 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       run_watch:
-        description: 'Run the email watch once (requires ENABLE_WATCH=true)'
+        description: 'Run the slot watch once (requires ENABLE_WATCH=true)'
+        type: boolean
+        default: false
+      test_notification:
+        description: 'Create one test notification issue'
         type: boolean
         default: false
 
@@ -20,7 +24,7 @@ concurrency:
 
 jobs:
   probe:
-    if: github.event_name == 'workflow_dispatch' && !inputs.run_watch
+    if: github.event_name == 'workflow_dispatch' && !inputs.run_watch && !inputs.test_notification
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -31,7 +35,7 @@ jobs:
         run: python3 watch.py --probe
 
   watch:
-    if: (github.event_name == 'schedule' || inputs.run_watch) && vars.ENABLE_WATCH == 'true'
+    if: (github.event_name == 'schedule' || (inputs.run_watch && !inputs.test_notification)) && vars.ENABLE_WATCH == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
@@ -39,10 +43,21 @@ jobs:
       - name: Check slots and notify
         env:
           GH_TOKEN: ${{ github.token }}
-          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          MAIL_TO: ${{ secrets.MAIL_TO }}
           START_DATE: ''
           END_DATE: ''
           TIME_OF_DAY: all
         run: python3 watch.py
+
+  test-notification:
+    if: github.event_name == 'workflow_dispatch' && inputs.test_notification
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create notification test issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 watch.py --test-notification

@@ -1,4 +1,4 @@
-"""Watch Koto written-exam slots and notify via LINE and Gmail.
+"""Watch Koto written-exam slots and notify via Gmail.
 
 Runs with Python's standard library on GitHub Actions. No personal booking data
 is sent to the reservation site. GitHub issue #1-like state is created on first run.
@@ -108,7 +108,7 @@ def load_state():
             except json.JSONDecodeError:
                 raise RuntimeError("Notification state issue has invalid JSON")
             return issue["number"], state
-    state = {"line_sent": [], "email_sent": []}
+    state = {"email_sent": []}
     issue = github("POST", "issues", {"title": STATE_TITLE, "body": json.dumps(state)})
     return issue["number"], state
 
@@ -128,24 +128,6 @@ def message_for(slots, keys):
         lines.append(f"ほか{len(keys) - 10}件")
     lines.append(f"予約入口: {ENTRY}")
     return "\n".join(lines)
-
-
-def send_line(message):
-    token = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
-    headers = {"Authorization": f"Bearer {token}"}
-    quota = request_json("https://api.line.me/v2/bot/message/quota", headers=headers)
-    usage = request_json("https://api.line.me/v2/bot/message/quota/consumption", headers=headers)
-    # Only send on the free 200-message plan, with a safety margin.
-    if quota.get("type") != "limited" or quota.get("value") != 200:
-        raise RuntimeError("LINE plan is not confirmed as the free 200-message plan")
-    if int(usage.get("totalUsage", 200)) >= 180:
-        raise RuntimeError("LINE free-message safety limit reached")
-    request_json(
-        "https://api.line.me/v2/bot/message/push",
-        method="POST",
-        payload={"to": os.environ["LINE_USER_ID"], "messages": [{"type": "text", "text": message}]},
-        headers=headers,
-    )
 
 
 def send_email(message):
@@ -168,8 +150,8 @@ def run():
         return
 
     required = (
-        "GITHUB_REPOSITORY", "GH_TOKEN", "LINE_CHANNEL_ACCESS_TOKEN",
-        "LINE_USER_ID", "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD", "MAIL_TO",
+        "GITHUB_REPOSITORY", "GH_TOKEN", "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD",
+        "MAIL_TO",
     )
     missing = [name for name in required if not os.getenv(name)]
     if missing:
@@ -188,22 +170,14 @@ def run():
     current = set(slots)
     print(f"Open slots: {len(current)}")
 
-    failures = []
-    for channel, sender in (("line_sent", send_line), ("email_sent", send_email)):
-        previous = set(state.get(channel, [])) & current
-        pending = current - previous
-        if pending:
-            try:
-                sender(message_for(slots, pending))
-                previous.update(pending)
-                print(f"{channel}: notified {len(pending)} slots")
-            except Exception:
-                failures.append(channel)
-                print(f"{channel}: delivery failed", file=sys.stderr)
-        state[channel] = sorted(previous)
-        save_state(issue_number, state)
-    if failures:
-        raise RuntimeError("Delivery failed: " + ", ".join(failures))
+    previous = set(state.get("email_sent", [])) & current
+    pending = current - previous
+    if pending:
+        send_email(message_for(slots, pending))
+        previous.update(pending)
+        print(f"Email: notified {len(pending)} slots")
+    state = {"email_sent": sorted(previous)}
+    save_state(issue_number, state)
 
 
 if __name__ == "__main__":

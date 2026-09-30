@@ -1,0 +1,45 @@
+name: Koto written exam slot watch
+
+on:
+  schedule:
+    - cron: '2/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: koto-written-exam-watch
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe calendar without credentials
+        run: python3 watch.py --probe
+
+  watch:
+    if: github.event_name == 'schedule' && vars.ENABLE_WATCH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check slots and notify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          START_DATE: ''
+          END_DATE: ''
+          TIME_OF_DAY: all
+        run: python3 watch.py

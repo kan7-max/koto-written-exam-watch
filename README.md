@@ -10,7 +10,7 @@ GitHub Actionsが5分ごとに江東運転免許試験場の本免学科試験�
 
 GmailのパスワードやAPIキーの登録は不要です。GitHub Actions付属の `GITHUB_TOKEN` でIssueを作ります。既存の `GMAIL_ADDRESS` と `MAIL_TO` は使用しません。
 
-日付を絞る場合はワークフロー内の `START_DATE` と `END_DATE` に `YYYY-MM-DD` を設定します。未設定なら実行日から90日先までです。午前だけなら `TIME_OF_DAY: morning`、午後だけなら `TIME_OF_DAY: afternoon` とします。
+日付を絞る場合はワークフロー内の `START_DATE` と `END_DATE` に `YYYY-MM-DD` を設定します。未設定なら実行日から30日先までで、30日を超える日は通知しません。午前だけなら `TIME_OF_DAY: morning`、午後だけなら `TIME_OF_DAY: afternoon` とします。
 
 ## 運用上の注意
 

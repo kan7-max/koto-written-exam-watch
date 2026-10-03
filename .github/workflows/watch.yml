@@ -13,9 +13,13 @@ on:
         description: 'Create one test notification issue'
         type: boolean
         default: false
+      test_email:
+        description: 'Send one test email through the repository notification setting'
+        type: boolean
+        default: false
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 concurrency:
@@ -24,7 +28,7 @@ concurrency:
 
 jobs:
   probe:
-    if: github.event_name == 'workflow_dispatch' && !inputs.run_watch && !inputs.test_notification
+    if: github.event_name == 'workflow_dispatch' && !inputs.run_watch && !inputs.test_notification && !inputs.test_email
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -35,18 +39,52 @@ jobs:
         run: python3 watch.py --probe
 
   watch:
-    if: (github.event_name == 'schedule' || (inputs.run_watch && !inputs.test_notification)) && vars.ENABLE_WATCH == 'true'
+    if: (github.event_name == 'schedule' || (inputs.run_watch && !inputs.test_notification && !inputs.test_email)) && vars.ENABLE_WATCH == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
       - name: Check slots and notify
+        id: watch
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           START_DATE: ''
           END_DATE: ''
           TIME_OF_DAY: all
         run: python3 watch.py
+      - name: Send the alert email through GitHub
+        if: steps.watch.outputs.alert_created == 'true'
+        env:
+          ALERT_TITLE: ${{ steps.watch.outputs.alert_title }}
+        run: |
+          git config user.name 'koto-written-exam-watch[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit --allow-empty -m "$ALERT_TITLE"
+          git push
+      - name: Record successful alert delivery
+        if: steps.watch.outputs.alert_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 watch.py --mark-delivered
+      - name: Prepare one monitoring-failure email
+        if: steps.watch.outcome == 'failure' || failure()
+        id: failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 watch.py --report-failure
+      - name: Send the monitoring-failure email through GitHub
+        if: (steps.watch.outcome == 'failure' || failure()) && steps.failure.outputs.alert_created == 'true'
+        env:
+          ALERT_TITLE: ${{ steps.failure.outputs.alert_title }}
+        run: |
+          git config user.name 'koto-written-exam-watch[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit --allow-empty -m "$ALERT_TITLE"
+          git push
+      - name: Mark the workflow as failed
+        if: steps.watch.outcome == 'failure' || failure()
+        run: exit 1
 
   test-notification:
     if: github.event_name == 'workflow_dispatch' && inputs.test_notification
@@ -61,3 +99,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 watch.py --test-notification
+
+  test-email:
+    if: github.event_name == 'workflow_dispatch' && inputs.test_email
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare test email
+        id: email
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 watch.py --test-email
+      - name: Send the test email through GitHub
+        env:
+          ALERT_TITLE: ${{ steps.email.outputs.alert_title }}
+        run: |
+          git config user.name 'koto-written-exam-watch[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit --allow-empty -m "$ALERT_TITLE"
+          git push

@@ -75,6 +75,8 @@ jobs:
         run: python3 watch.py --report-failure
       - name: Send the monitoring-failure email through GitHub
         if: (steps.watch.outcome == 'failure' || failure()) && steps.failure.outputs.alert_created == 'true'
+        id: failure-email
+        continue-on-error: true
         env:
           ALERT_TITLE: ${{ steps.failure.outputs.alert_title }}
         run: |
@@ -82,8 +84,13 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit --allow-empty -m "$ALERT_TITLE"
           git push
+      - name: Record successful monitoring-failure delivery
+        if: always() && steps.failure-email.outcome == 'success' && steps.failure.outputs.alert_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 watch.py --mark-failure-delivered
       - name: Mark the workflow as failed
-        if: steps.watch.outcome == 'failure' || failure()
+        if: steps.watch.outcome == 'failure' || steps.failure-email.outcome == 'failure' || failure()
         run: exit 1
 
   test-notification:

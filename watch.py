@@ -7,6 +7,7 @@ is sent to the reservation site. GitHub issue #1-like state is created on first 
 import datetime as dt
 import json
 import os
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -18,6 +19,10 @@ API = "https://license-test-tokyo-prd-police-pref-api.tokyo-madoguchi-yoyaku.com
 ENTRY = "https://license-renew.tokyo-madoguchi-yoyaku.com/police-pref-tokyo/index_000.html"
 STATE_TITLE = "江東学科試験ボットの通知状態"
 TIME_OF_DAY = os.getenv("TIME_OF_DAY", "all")
+STATE_AUTHOR = "github-actions[bot]"
+SLOT_ALERT_PREFIX = "【空き枠】江東・本免学科試験 "
+FAILURE_ALERT_TITLE = "【監視エラー】江東・本免学科試験"
+SLOT_KEY_PATTERN = re.compile(r"^\d{8}-\d{4}-\d{4}-[^\r\n]*$")
 
 
 def request_json(url, *, method="GET", payload=None, headers=None):
@@ -99,7 +104,11 @@ def github(method, path, payload=None):
 
 def load_state():
     for issue in github("GET", "issues?state=open&per_page=100"):
-        if "pull_request" not in issue and issue["title"] == STATE_TITLE:
+        if (
+            "pull_request" not in issue
+            and issue["title"] == STATE_TITLE
+            and issue.get("user", {}).get("login") == STATE_AUTHOR
+        ):
             try:
                 state = json.loads(issue["body"] or "{}")
             except json.JSONDecodeError:
@@ -152,9 +161,11 @@ def pending_alert(state):
     if (
         not isinstance(keys, list)
         or not keys
-        or not all(isinstance(key, str) for key in keys)
+        or not all(isinstance(key, str) and SLOT_KEY_PATTERN.fullmatch(key) for key in keys)
         or not isinstance(title, str)
-        or not title
+        or not title.startswith(SLOT_ALERT_PREFIX)
+        or "\r" in title
+        or "\n" in title
     ):
         raise RuntimeError("Notification state issue has invalid pending alert")
     return {"keys": sorted(set(keys)), "title": title}
@@ -170,22 +181,50 @@ def mark_alert_delivered():
     sent.update(pending["keys"])
     state.pop("pending", None)
     state.pop("failure_notified", None)
+    state.pop("failure_pending", None)
     state["issue_sent"] = sorted(sent)
     save_state(issue_number, state)
     print(f"Delivery recorded for {len(pending['keys'])} slots")
 
 
+def pending_failure_alert(state):
+    """Return a monitoring-failure email awaiting a successful notification push."""
+    pending = state.get("failure_pending")
+    if pending is None:
+        return None
+    if not isinstance(pending, dict) or pending.get("title") != FAILURE_ALERT_TITLE:
+        raise RuntimeError("Notification state issue has invalid pending failure alert")
+    return FAILURE_ALERT_TITLE
+
+
 def report_failure():
     """Prepare one email alert for a run failure until a later run recovers."""
     issue_number, state = load_state()
+    waiting = pending_failure_alert(state)
+    if waiting:
+        set_workflow_output("alert_created", "true")
+        set_workflow_output("alert_title", waiting)
+        print("Retrying monitoring-failure notification")
+        return
     if state.get("failure_notified"):
         print("Failure alert is already recorded")
         return
-    state["failure_notified"] = True
+    state["failure_pending"] = {"title": FAILURE_ALERT_TITLE}
     save_state(issue_number, state)
     set_workflow_output("alert_created", "true")
-    set_workflow_output("alert_title", "【監視エラー】江東・本免学科試験")
+    set_workflow_output("alert_title", FAILURE_ALERT_TITLE)
     print("Failure notification prepared")
+
+
+def mark_failure_delivered():
+    """Persist a monitoring-failure email only after its notification push succeeds."""
+    issue_number, state = load_state()
+    if pending_failure_alert(state) is None:
+        raise RuntimeError("No pending monitoring-failure alert to mark as delivered")
+    state.pop("failure_pending", None)
+    state["failure_notified"] = True
+    save_state(issue_number, state)
+    print("Monitoring-failure delivery recorded")
 
 
 def required_environment():
@@ -219,6 +258,9 @@ def run():
     if "--report-failure" in sys.argv:
         report_failure()
         return
+    if "--mark-failure-delivered" in sys.argv:
+        mark_failure_delivered()
+        return
     if TIME_OF_DAY not in ("all", "morning", "afternoon"):
         raise RuntimeError("TIME_OF_DAY must be all, morning, or afternoon")
 
@@ -245,7 +287,7 @@ def run():
     if pending:
         first = slots[sorted(pending)[0]]
         more = f" ほか{len(pending) - 1}件" if len(pending) > 1 else ""
-        title = f"【空き枠】江東・本免学科試験 {first['date']} {first['time']}{more}"
+        title = f"{SLOT_ALERT_PREFIX}{first['date']} {first['time']}{more}"
         create_notification_issue(
             title,
             message_for(slots, pending),

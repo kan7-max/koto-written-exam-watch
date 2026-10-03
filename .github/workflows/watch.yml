@@ -1,8 +1,11 @@
 name: Koto written exam slot watch
 
 on:
+  # Five-minute native fallback until the external scheduler is enabled.
   schedule:
     - cron: '2/5 * * * *'
+    # Retained as a lower-frequency fallback after external scheduling begins.
+    - cron: '19 * * * *'
   workflow_dispatch:
     inputs:
       run_watch:
@@ -39,7 +42,13 @@ jobs:
         run: python3 watch.py --probe
 
   watch:
-    if: (github.event_name == 'schedule' || (inputs.run_watch && !inputs.test_notification && !inputs.test_email)) && vars.ENABLE_WATCH == 'true'
+    if: >-
+      (
+        (github.event_name == 'schedule' &&
+         (github.event.schedule == '19 * * * *' || vars.EXTERNAL_SCHEDULER_ENABLED != 'true')) ||
+        (github.event_name == 'workflow_dispatch' &&
+         inputs.run_watch && !inputs.test_notification && !inputs.test_email)
+      ) && vars.ENABLE_WATCH == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:

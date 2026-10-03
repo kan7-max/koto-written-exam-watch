@@ -14,6 +14,12 @@ GmailのパスワードやメールAPIキーは不要です。GitHub Actions付�
 
 日付を絞る場合はワークフロー内の `START_DATE` と `END_DATE` に `YYYY-MM-DD` を設定します。未設定なら実行日から30日先までで、30日を超える日は通知しません。午前だけなら `TIME_OF_DAY: morning`、午後だけなら `TIME_OF_DAY: afternoon` とします。
 
+## 外部スケジューラを使う場合
+
+外部スケジューラから `workflow_dispatch` を5分間隔で呼び出す構成にできます。外部側には、このリポジトリだけを選択したFine-grained Personal Access Tokenを保存し、権限は **Actions: write** だけにします。トークンや通知先アドレスをリポジトリ、Issue、チャットへ書き込まないでください。
+
+外部ジョブが動作確認できてから、Actions Variables に `EXTERNAL_SCHEDULER_ENABLED=true` を登録します。これによりGitHub標準の5分実行は毎時19分のバックアップへ切り替わり、外部スケジューラと二重に照会し続けません。
+
 ## 運用上の注意
 
 - リポジトリとIssueは公開です。空き枠の日時はIssueに表示されます。個人情報や認証情報は書き込みません。

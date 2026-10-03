@@ -146,7 +146,7 @@ def set_workflow_output(name, value):
     output_path = os.getenv("GITHUB_OUTPUT")
     if output_path:
         with open(output_path, "a", encoding="utf-8") as output:
-            output.write(f"{name}={value.replace(chr(10), ' ')}\\n")
+            output.write(f"{name}={value.replace(chr(10), ' ')}\n")
 
 
 def pending_alert(state):
